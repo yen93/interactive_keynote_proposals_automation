@@ -1,0 +1,10 @@
+.env
+.google_token.json
+*client_secret*.json
+__pycache__/
+*.pyc
+.claude/*
+!.claude/skills/
+
+# Real client demo-notes intake, not a repo asset
+test_demo_notes_for_interactive_keynote.pdf
