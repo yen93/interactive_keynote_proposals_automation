@@ -1,0 +1,114 @@
+================================================================================
+CHAT HISTORY EXPORT — 2026-08-26
+Session: Read-only audit of the Interactive Keynote automation (client-folder
+target, GitHub project_vars recipients, routine linkage), then a follow-up
+config change adding recipients and repointing client-folder creation.
+================================================================================
+
+NOTE ON REDACTIONS: A RemoteTrigger "get" call on the
+interactive-keynote-proposals-automation-hourly routine returned its stored
+prompt text, which embeds live credentials (Google OAuth client id/secret/
+refresh token, Anthropic API key, Supabase service key, Fathom API key) that
+get written to a .env file at run time. All such values below have been
+replaced with [REDACTED_*] placeholders.
+
+--------------------------------------------------------------------------------
+USER:
+Asked for three read-only checks:
+1. Does the Claude Code routine tied to this project folder create a client
+   folder in https://drive.google.com/drive/folders/16xjpO2qFGxPBXRvirx86hc_kmnyXALq6 ?
+2. Are liv@myadventuregroup.com.au, jaycel@myadventuregroup.com.au, and
+   julienne@myadventuregroup.com.au all listed as recipients in the GitHub
+   project_vars?
+3. Confirm this project folder and its GitHub repo are both tied to the
+   ⚡ interactive-keynote-proposals-automation-hourly Claude Code routine.
+
+--------------------------------------------------------------------------------
+ASSISTANT:
+Explored the repo (git remote, file tree) and read project_vars.txt,
+config.py, drive_service.py, and pipeline.py.
+
+Findings:
+- drive_service.create_client_folder() does create a "{Client} {Year}"
+  folder on every run, but under config.PROJ_DRIVE_FOLDER_ID, which is
+  derived from project_vars.txt's proj_drive_link. Locally/at that time on
+  GitHub, proj_drive_link pointed to folder 1gAW22Y3YSCGPKPhSiNCTKfyaHW2kH0pq
+  ("Interactive Keynote Proposals", created 2026-08-17), NOT to the folder
+  the user linked (16xjpO2qFGxPBXRvirx86hc_kmnyXALq6, "AUTOMATED SALES
+  PROPOSALS", created 2026-08-03, a different top-level folder). Confirmed
+  via Google Drive get_file_metadata that these are two distinct folders
+  with different parents.
+- Compared local project_vars.txt against the version on GitHub
+  (raw.githubusercontent.com) and found the local checkout was one commit
+  behind origin/main: origin/main (commit 7b8f536 "Update project_vars.txt")
+  already had liv@myadventuregroup.com.au added to notification_recipients;
+  the local file didn't. jaycel@myadventuregroup.com.au was absent from
+  both demo_notes_recipients and notification_recipients on either side.
+  demo_notes_recipients only ever contained julienne@.
+- Used RemoteTrigger (list, then get) to find the routine. Confirmed
+  trig_01KSh5tdtUWA1BXND9eNgR4R, named
+  "interactive-keynote-proposals-automation-hourly", is configured with
+  git_repository url https://github.com/yen93/interactive_keynote_proposals_automation
+  — matching this project folder's origin remote. However, flagged that the
+  routine is currently enabled:false, has no cron_expression set despite the
+  "-hourly" name, next_run_at is a zero timestamp, and its last run
+  (2026-08-25T07:46:40Z) ended with status ABANDONED — so while correctly
+  wired to this repo, it isn't actually firing on a schedule right now.
+
+Reported all three findings back to the user with the folder-ID mismatch,
+the recipient-list discrepancy, and the routine's disabled/unscheduled
+state clearly called out.
+
+--------------------------------------------------------------------------------
+USER:
+Add jaycel and liv to the notification_recipients list, and update the
+pipeline so client folders get created in
+https://drive.google.com/drive/folders/16xjpO2qFGxPBXRvirx86hc_kmnyXALq6
+instead.
+
+--------------------------------------------------------------------------------
+ASSISTANT:
+Entered plan mode (auto-triggered). Before planning, used Google Drive
+search_files with a parentId query to list the children of
+16xjpO2qFGxPBXRvirx86hc_kmnyXALq6 and confirmed it already holds several
+client folders named in exactly the "{Client} {Year}" pattern this pipeline
+produces (e.g. "Whiddon 2026", "Viscount 2026", "Tilray 2026", "Eagle Hawk
+Secondary College 2026") — i.e. it's a shared hub already used by other
+proposal automations, and no extra subfolder is needed.
+
+Wrote and got approval on a plan (C:\Users\Cloverly\.claude\plans\
+add-jaycel-and-liv-linear-pizza.md) to:
+1. git pull origin main first (to pick up the already-merged liv@ addition
+   without creating a conflict).
+2. Add jaycel@myadventuregroup.com.au to notification_recipients only
+   (demo_notes_recipients left untouched, since the user only asked about
+   notification recipients).
+3. Change proj_drive_link to
+   https://drive.google.com/drive/u/0/folders/16xjpO2qFGxPBXRvirx86hc_kmnyXALq6.
+4. No code changes needed in drive_service.py/config.py, since
+   config.PROJ_DRIVE_FOLDER_ID is derived from proj_drive_link via regex.
+5. Commit and push to origin/main (this repo is what the cloud routine
+   checks out).
+
+After approval, executed the plan:
+- git pull origin main — fast-forwarded 64ac26a..7b8f536 cleanly, no
+  conflicts, picking up the existing liv@ addition.
+- Edited project_vars.txt: notification_recipients became
+  [julienne@, liv@, jaycel@]; proj_drive_link changed to the
+  16xjpO2qFGxPBXRvirx86hc_kmnyXALq6 folder link.
+- Validated the edited file: parsed it with Node's JSON.parse to confirm
+  well-formed JSON, and simulated config.py's folder-ID extraction regex to
+  confirm it resolves to 16xjpO2qFGxPBXRvirx86hc_kmnyXALq6 as expected.
+- Reviewed the diff (git diff project_vars.txt), which matched the plan
+  exactly.
+- Committed (76db61e "Add jaycel to notification recipients; repoint client
+  folders to AUTOMATED SALES PROPOSALS") and pushed to origin/main
+  successfully.
+
+Reported the commit hash and both changes back to the user, along with a
+reminder that the routine is still disabled so this won't affect live runs
+until it's re-enabled.
+
+================================================================================
+END OF EXPORT
+================================================================================
