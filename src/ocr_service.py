@@ -1,79 +1,87 @@
-"""OCR + entity extraction from the handwritten demo-notes photo via Claude vision."""
+"""OCR + entity extraction from the handwritten demo-notes photo via OpenAI vision."""
 
 import base64
-from typing import Optional
+import json
 
-import anthropic
+from openai import OpenAI
 
 import config
 
-MODEL = "claude-opus-5"
+MODEL = "gpt-4o"
 
 EXTRACTION_TOOL = {
-    "name": "extract_keynote_demo_notes",
-    "description": "Structured fields transcribed from a handwritten Interactive Keynote demo-call notes photo.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "client_org": {"type": "string", "description": "Client company/organisation name"},
-            "contact_name": {"type": "string", "description": "Primary contact person at the client"},
-            "event_date": {"type": "string", "description": "Event/conference date if mentioned, else empty string"},
-            "location": {"type": "string", "description": "Event venue/city, or virtual, if mentioned"},
-            "audience_size": {"type": "string", "description": "Audience/delegate size if mentioned"},
-            "duration": {
-                "type": "string",
-                "description": (
-                    "Requested keynote duration if mentioned (e.g. '45 mins', '90 mins'). "
-                    "If not mentioned, use the standard offering length '60 minutes'."
-                ),
+    "type": "function",
+    "function": {
+        "name": "extract_keynote_demo_notes",
+        "description": "Structured fields transcribed from a handwritten Interactive Keynote demo-call notes photo.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "client_org": {"type": "string", "description": "Client company/organisation name"},
+                "contact_name": {"type": "string", "description": "Primary contact person at the client"},
+                "event_date": {"type": "string", "description": "Event/conference date if mentioned, else empty string"},
+                "location": {"type": "string", "description": "Event venue/city, or virtual, if mentioned"},
+                "audience_size": {"type": "string", "description": "Audience/delegate size if mentioned"},
+                "duration": {
+                    "type": "string",
+                    "description": (
+                        "Requested keynote duration if mentioned (e.g. '45 mins', '90 mins'). "
+                        "If not mentioned, use the standard offering length '60 minutes'."
+                    ),
+                },
+                "summary": {"type": "string", "description": "1-3 sentence summary of the client's event and goals"},
+                "context": {
+                    "type": "string",
+                    "description": (
+                        "Notes on conference theme, audience makeup, desired learning outcomes, "
+                        "or any other client-specific context discussed on the call"
+                    ),
+                },
+                "raw_transcript": {"type": "string", "description": "Best-effort full transcription of all handwritten text on the page"},
+                "unclear_fields": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Names of fields above that were illegible, ambiguous, or not present on the page",
+                },
             },
-            "summary": {"type": "string", "description": "1-3 sentence summary of the client's event and goals"},
-            "context": {
-                "type": "string",
-                "description": (
-                    "Notes on conference theme, audience makeup, desired learning outcomes, "
-                    "or any other client-specific context discussed on the call"
-                ),
-            },
-            "raw_transcript": {"type": "string", "description": "Best-effort full transcription of all handwritten text on the page"},
-            "unclear_fields": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Names of fields above that were illegible, ambiguous, or not present on the page",
-            },
+            "required": [
+                "client_org",
+                "summary",
+                "raw_transcript",
+                "unclear_fields",
+            ],
         },
-        "required": [
-            "client_org",
-            "summary",
-            "raw_transcript",
-            "unclear_fields",
-        ],
     },
 }
 
 
 def extract_fields(image_bytes: bytes, mime_type: str) -> dict:
-    client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+    client = OpenAI(api_key=config.OPENAI_API_KEY)
     encoded = base64.standard_b64encode(image_bytes).decode("utf-8")
-    block_type = "document" if mime_type == "application/pdf" else "image"
+    data_url = f"data:{mime_type};base64,{encoded}"
 
-    response = client.messages.create(
+    if mime_type == "application/pdf":
+        media_block = {
+            "type": "file",
+            "file": {"filename": "demo_notes.pdf", "file_data": data_url},
+        }
+    else:
+        media_block = {"type": "image_url", "image_url": {"url": data_url}}
+
+    response = client.chat.completions.create(
         model=MODEL,
         max_tokens=2048,
         tools=[EXTRACTION_TOOL],
-        tool_choice={"type": "tool", "name": "extract_keynote_demo_notes"},
+        tool_choice={"type": "function", "function": {"name": "extract_keynote_demo_notes"}},
         messages=[
             {
                 "role": "user",
                 "content": [
-                    {
-                        "type": block_type,
-                        "source": {"type": "base64", "media_type": mime_type, "data": encoded},
-                    },
+                    media_block,
                     {
                         "type": "text",
                         "text": (
-                            "Transcribe this handwritten Interactive Keynote demo-call notes page "
+                            "Transcribe this handwritten Interactive Keynote demo-call notes "
                             "and extract the fields defined in extract_keynote_demo_notes. If "
                             "handwriting is illegible or a field isn't on the page, leave it as an "
                             "empty string and list its name in unclear_fields rather than guessing — "
@@ -86,10 +94,10 @@ def extract_fields(image_bytes: bytes, mime_type: str) -> dict:
         ],
     )
 
-    for block in response.content:
-        if block.type == "tool_use" and block.name == "extract_keynote_demo_notes":
-            return block.input
-    raise RuntimeError("Claude did not return the expected extract_keynote_demo_notes tool call")
+    tool_calls = response.choices[0].message.tool_calls
+    if tool_calls and tool_calls[0].function.name == "extract_keynote_demo_notes":
+        return json.loads(tool_calls[0].function.arguments)
+    raise RuntimeError("OpenAI did not return the expected extract_keynote_demo_notes tool call")
 
 
 def missing_required_fields(fields: dict) -> list[str]:

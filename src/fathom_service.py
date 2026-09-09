@@ -9,30 +9,33 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-import anthropic
 import requests
+from openai import OpenAI
 
 import config
 
 log = logging.getLogger("fathom_service")
 
-MODEL = "claude-opus-5"
+MODEL = "gpt-4o"
 API_BASE = "https://api.fathom.ai/external/v1"
 
 MATCH_TOOL = {
-    "name": "match_meeting",
-    "description": "Identify which recorded call (if any) corresponds to this client's demo notes.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "meeting_id": {
-                "type": "string",
-                "description": "The id of the matching meeting, or an empty string if none confidently match",
+    "type": "function",
+    "function": {
+        "name": "match_meeting",
+        "description": "Identify which recorded call (if any) corresponds to this client's demo notes.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "meeting_id": {
+                    "type": "string",
+                    "description": "The id of the matching meeting, or an empty string if none confidently match",
+                },
+                "confidence": {"type": "string", "enum": ["high", "medium", "low", "none"]},
+                "reasoning": {"type": "string"},
             },
-            "confidence": {"type": "string", "enum": ["high", "medium", "low", "none"]},
-            "reasoning": {"type": "string"},
+            "required": ["meeting_id", "confidence", "reasoning"],
         },
-        "required": ["meeting_id", "confidence", "reasoning"],
     },
 }
 
@@ -95,12 +98,12 @@ def find_matching_notes(ocr_fields: dict) -> Optional[str]:
         for m in meetings
     ]
 
-    client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
-    response = client.messages.create(
+    client = OpenAI(api_key=config.OPENAI_API_KEY)
+    response = client.chat.completions.create(
         model=MODEL,
         max_tokens=1024,
         tools=[MATCH_TOOL],
-        tool_choice={"type": "tool", "name": "match_meeting"},
+        tool_choice={"type": "function", "function": {"name": "match_meeting"}},
         messages=[
             {
                 "role": "user",
@@ -117,9 +120,9 @@ def find_matching_notes(ocr_fields: dict) -> Optional[str]:
     )
 
     match = None
-    for block in response.content:
-        if block.type == "tool_use" and block.name == "match_meeting":
-            match = block.input
+    tool_calls = response.choices[0].message.tool_calls
+    if tool_calls and tool_calls[0].function.name == "match_meeting":
+        match = json.loads(tool_calls[0].function.arguments)
 
     if not match or not match.get("meeting_id") or match.get("confidence") in ("none", "low"):
         return None

@@ -1,5 +1,20 @@
 AS-BUILT: Interactive Keynote Proposal Automation
 ==================================================
+
+*** MIGRATION UPDATE (2026-09-09): Anthropic -> OpenAI ***
+The pipeline no longer uses the Anthropic API. All three LLM call sites
+(OCR/vision in src/ocr_service.py, slide-text rewrite in src/slides_rewriter.py,
+and Fathom meeting matching in src/fathom_service.py) now use the OpenAI API
+(model "gpt-4o", via chat.completions + function calling). The key is loaded as
+OPENAI_API_KEY from .env (or, as a local fallback, from openai_api_key.txt) by
+config.py; ANTHROPIC_API_KEY has been removed and requirements.txt now pins
+`openai>=1.40.0` instead of `anthropic`. The cloud routine's embedded .env prompt
+was updated to supply OPENAI_API_KEY. NOTE: the sandbox environment
+(env_01DYHNjMesGeuq9ABo7W6m6f) must allow egress to api.openai.com for cloud runs
+to reach OpenAI. The historical narrative below (which references claude-opus-5,
+Anthropic credit, etc.) is retained as the original build record and predates this
+migration.
+
 Status: reflects the deployed pipeline as of 2026-08-17. This is an
 independent project — it shares no code, credentials file, or database
 tables with the Uncharted Ice automation

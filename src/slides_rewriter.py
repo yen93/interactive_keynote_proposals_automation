@@ -1,37 +1,40 @@
-"""Rewrites a duplicated deck's client-specific text via Claude, and swaps
+"""Rewrites a duplicated deck's client-specific text via OpenAI, and swaps
 the client logo into any image shape tagged as a logo placeholder."""
 
 import json
 import logging
 
-import anthropic
+from openai import OpenAI
 
 import config
 
 log = logging.getLogger("slides_rewriter")
 
-MODEL = "claude-opus-5"
+MODEL = "gpt-4o"
 LOGO_TAG_KEYWORDS = ("logo", "client_logo", "client logo")
 
 REWRITE_TOOL = {
-    "name": "rewrite_slide_text",
-    "description": "Rewritten text for each editable shape in the Interactive Keynote proposal deck, tailored to the new client.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "shapes": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "object_id": {"type": "string"},
-                        "new_text": {"type": "string"},
+    "type": "function",
+    "function": {
+        "name": "rewrite_slide_text",
+        "description": "Rewritten text for each editable shape in the Interactive Keynote proposal deck, tailored to the new client.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "shapes": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "object_id": {"type": "string"},
+                            "new_text": {"type": "string"},
+                        },
+                        "required": ["object_id", "new_text"],
                     },
-                    "required": ["object_id", "new_text"],
-                },
-            }
+                }
+            },
+            "required": ["shapes"],
         },
-        "required": ["shapes"],
     },
 }
 
@@ -100,12 +103,12 @@ def find_logo_placeholders(presentation: dict) -> list[str]:
 
 
 def _build_rewrite_requests(shapes: list[dict], ocr_fields: dict) -> list[dict]:
-    client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
-    response = client.messages.create(
+    client = OpenAI(api_key=config.OPENAI_API_KEY)
+    response = client.chat.completions.create(
         model=MODEL,
         max_tokens=8192,
         tools=[REWRITE_TOOL],
-        tool_choice={"type": "tool", "name": "rewrite_slide_text"},
+        tool_choice={"type": "function", "function": {"name": "rewrite_slide_text"}},
         messages=[
             {
                 "role": "user",
@@ -150,11 +153,11 @@ def _build_rewrite_requests(shapes: list[dict], ocr_fields: dict) -> list[dict]:
     )
 
     rewritten = None
-    for block in response.content:
-        if block.type == "tool_use" and block.name == "rewrite_slide_text":
-            rewritten = block.input["shapes"]
+    tool_calls = response.choices[0].message.tool_calls
+    if tool_calls and tool_calls[0].function.name == "rewrite_slide_text":
+        rewritten = json.loads(tool_calls[0].function.arguments)["shapes"]
     if rewritten is None:
-        raise RuntimeError("Claude did not return the expected rewrite_slide_text tool call")
+        raise RuntimeError("OpenAI did not return the expected rewrite_slide_text tool call")
 
     shapes_by_id = {s["object_id"]: s for s in shapes}
     requests = []
