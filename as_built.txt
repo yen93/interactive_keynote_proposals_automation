@@ -1,0 +1,86 @@
+================================================================================
+AS-BUILT — Interactive Keynote Proposal Automation
+Last updated: 2026-09-09
+================================================================================
+
+OVERVIEW
+Gmail-triggered pipeline that turns handwritten/typed "demo call notes"
+(image/PDF email attachments) into a customized Google Slides proposal for
+James Castrission's "Crossing the Ice" Interactive Keynote, using a single
+master template in Google Drive. Runs idempotently (Supabase dedup) and is
+designed to be invoked repeatedly on a schedule. Entry point: main.py ->
+pipeline.run_once().
+
+SCRIPTS
+- main.py — entry point; calls pipeline.run_once().
+  Requires: .env (loaded via config.py).
+- pipeline.py — orchestration for each unprocessed matching email: OCR ->
+  "started" Gmail notification -> optional Fathom enrichment -> duplicate
+  master template in Drive -> rewrite client-specific slide text + swap logo
+  -> pre-send QA flags -> "ready"/error Gmail reply -> Supabase log.
+- config.py — loads .env + project_vars.txt. Provides OPENAI_API_KEY
+  (env var, falling back to reading openai_api_key.txt), Google OAuth vars,
+  Supabase vars, Fathom vars, GMAIL_TRIGGER_QUERY, GOOGLE_SCOPES,
+  REQUIRED_OCR_FIELDS, SUPABASE_LOG_TABLE.
+- src/ocr_service.py — OpenAI gpt-4o vision OCR/entity extraction (forced
+  function call extract_keynote_demo_notes). Images sent as base64 image_url;
+  PDFs as a base64 "file" part.
+- src/slides_rewriter.py — OpenAI gpt-4o slide-text rewrite (forced function
+  call rewrite_slide_text) + client-logo image swap via Slides batchUpdate.
+  Single guessed logo_url; logo swap isolated as its own non-fatal batch.
+- src/fathom_service.py — Fathom REST fetch of recent meetings + OpenAI
+  gpt-4o match (forced function call match_meeting). Best-effort; never blocks.
+- src/gmail_service.py — Gmail search (trigger query), attachment download,
+  start/reply notification threading.
+- src/drive_service.py — create/reuse client folder, upload demo notes, find
+  the single master template, duplicate it.
+- src/logo_service.py — guesses a client logo URL (Google favicon by domain);
+  unverified, flagged for human review.
+- src/supabase_service.py — dedup/audit (is_processed / mark_processed).
+- src/google_clients.py — builds authenticated Gmail/Drive/Slides clients
+  from the stored Google refresh token.
+- oauth_setup.py — one-time Google OAuth consent flow to mint the refresh
+  token (not part of runtime).
+- inspect_template.py — debug CLI dumping slide shape/image alt-text.
+- build_master_template.py — builds/uploads a .pptx template; manual, not part
+  of the runtime pipeline.
+
+LLM USAGE
+- All LLM calls use the OpenAI API, model "gpt-4o", via chat.completions with
+  forced function calling. (Migrated 2026-09-09 from Anthropic claude-opus-5;
+  the Anthropic API is no longer used anywhere in the pipeline.)
+  Key: OPENAI_API_KEY in .env (gitignored) or openai_api_key.txt (gitignored).
+
+EXTERNAL INTEGRATIONS
+- OpenAI (api.openai.com) — REST via openai SDK; key in .env / openai_api_key.txt
+  (both gitignored). Cloud routine's sandbox egress must allow api.openai.com.
+- Gmail + Google Drive + Google Slides (Google APIs) — OAuth2 refresh-token
+  flow; client id/secret/refresh token in .env (gitignored).
+- Supabase (https://aivitcomiywiysrfwqxt.supabase.co) — REST via supabase-py;
+  service key in .env (gitignored).
+- Fathom (https://api.fathom.ai/external/v1) — REST, X-Api-Key header; key in
+  .env (gitignored). Optional enrichment.
+
+DATA STORES
+- Supabase table interactive_keynote_proposal_logs — dedup/audit per processed
+  email (is_processed, status, client_org, event_date, proposal_link, etc.).
+- Google Drive — "Interactive Keynote Proposals" folder (per-client subfolders
+  created at runtime) + "Templates" subfolder holding the single master deck.
+- project_vars.txt — non-secret config: demo_notes_recipients,
+  notification_recipients, proj_drive_link, templates_drive_link.
+
+AUTOMATIONS / ROUTINES
+- interactive-keynote-proposals-automation-hourly
+  (Claude Code cloud routine, trig_01KSh5tdtUWA1BXND9eNgR4R). Each run clones
+  GitHub yen93/interactive_keynote_proposals_automation (default branch main),
+  writes .env from credentials embedded in the routine's stored prompt (now
+  supplying OPENAI_API_KEY, not ANTHROPIC_API_KEY), pip installs, runs
+  python main.py. State: enabled=true but cron_expression is empty, so it does
+  NOT auto-fire on a schedule — currently manual-trigger only.
+
+DEPLOYMENT
+- GitHub: https://github.com/yen93/interactive_keynote_proposals_automation
+  (default branch main — what the cloud routine clones).
+- Secrets excluded from git via .gitignore: .env, openai_api_key.txt,
+  .google_token.json, *client_secret*.json, and the real client demo-notes PDF.
+================================================================================

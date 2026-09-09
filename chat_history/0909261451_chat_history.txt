@@ -1,0 +1,166 @@
+================================================================================
+CHAT HISTORY EXPORT — 2026-09-09
+Session: Migrate the Interactive Keynote pipeline (and its cloud routine) off
+the Anthropic API entirely and onto OpenAI (gpt-4o) for OCR, slide-text
+rewrite, and Fathom meeting matching. Code + GitHub push + routine prompt
+update.
+================================================================================
+
+NOTE ON REDACTIONS: This session read the local .env, the openai_api_key.txt
+file, and did RemoteTrigger get/update calls on the
+interactive-keynote-proposals-automation-hourly routine whose stored prompt
+embeds live credentials. Values that appeared in tool output — the OpenAI API
+key, the Anthropic API key, the Google OAuth client id/secret and refresh
+token, the Supabase service key, and the Fathom API key — have all been
+replaced below with [REDACTED_*] placeholders. No real secret is written into
+this file.
+
+--------------------------------------------------------------------------------
+USER:
+Three-part request:
+1. Update the ⚡ interactive-keynote-proposals-automation-hourly routine so it
+   never uses the Anthropic API key anymore.
+2. Switch to the OpenAI API key for all OCR or any usage the key does in this
+   routine. Key provided at
+   C:\Users\Cloverly\claude_code\proposals\interactive_keynote_proposal_maker\openai_api_key.txt
+3. May use the sibling project's chat history
+   (C:\Users\Cloverly\claude_code\proposals\keynote_proposal_maker\chat_history\0909261427_chat_history.txt)
+   as a reference for how the same switch was done, but never update anything
+   outside the interactive_keynote_proposal_maker folder.
+
+(Session ran in plan mode first.)
+
+--------------------------------------------------------------------------------
+ASSISTANT:
+Explored via three parallel Explore agents plus direct reads. Findings:
+
+- The pipeline calls the Anthropic API in THREE places, all model
+  "claude-opus-5", all using the forced tool_choice pattern:
+    * src/ocr_service.py    — vision OCR of the demo-notes photo/PDF
+    * src/slides_rewriter.py — client-specific slide-text rewrite
+    * src/fathom_service.py  — matching a Fathom recording to the demo notes
+  config.py loaded ANTHROPIC_API_KEY (value [REDACTED_ANTHROPIC_API_KEY], from
+  .env); requirements.txt pinned anthropic>=0.34.0.
+- openai_api_key.txt existed at the repo root (value [REDACTED_OPENAI_API_KEY])
+  but nothing read it, and it was NOT gitignored (would leak if committed).
+- The sibling project keynote_proposal_maker had ALREADY done this exact
+  migration; its src/ocr_service.py, src/slides_rewriter.py,
+  src/fathom_service.py, and config.py were read as verbatim reference
+  (OpenAI SDK, model "gpt-4o", chat.completions + function calling, base64
+  image_url for images and a base64 "file" part for PDFs, results read from
+  response.choices[0].message.tool_calls[0].function.arguments via json.loads).
+- The routine "⚡ interactive-keynote-proposals-automation-hourly"
+  (trig_01KSh5tdtUWA1BXND9eNgR4R) is a Claude Code CLOUD routine, not a local
+  cron/Task Scheduler job. Each run clones the GitHub repo
+  yen93/interactive_keynote_proposals_automation (default branch main) fresh,
+  writes its own .env from credentials embedded in the routine's stored
+  prompt, pip installs, and runs python main.py. So local edits alone would
+  NOT stop live runs — the committed code, the pushed repo, and the routine's
+  embedded prompt all had to change together. A RemoteTrigger get confirmed
+  the live routine is enabled:true but has an EMPTY cron_expression (so it
+  does not actually auto-fire despite the "-hourly" name), and its prompt
+  embedded ANTHROPIC_API_KEY and the phrase "OCRs ... via Claude vision".
+
+Asked the user two clarifying questions:
+- Deployment reach → they chose FULL (convert code + push to GitHub + update
+  the routine's embedded prompt).
+- Routine state → LEAVE AS-IS (don't change enabled/schedule).
+
+Wrote the plan to the plan file and exited plan mode; user approved.
+
+--------------------------------------------------------------------------------
+USER:
+(Answered the two questions: Full deployment; leave routine state as-is.)
+(Approved the plan.)
+
+--------------------------------------------------------------------------------
+ASSISTANT:
+Implemented the migration, all inside interactive_keynote_proposal_maker:
+
+Code:
+- src/ocr_service.py — Anthropic vision → OpenAI gpt-4o vision. image →
+  {"type":"image_url","image_url":{"url":data_url}}; PDF →
+  {"type":"file","file":{"filename":"demo_notes.pdf","file_data":data_url}}.
+  Kept this project's existing field set and prompt wording (did NOT import the
+  sibling's client_website/contact_email additions).
+- src/slides_rewriter.py — LLM call → OpenAI gpt-4o. Kept this project's
+  existing single-logo_url rewrite() signature and logo logic and its
+  interactive-specific rewrite prompt verbatim; only the model call changed.
+- src/fathom_service.py — match_meeting call → OpenAI gpt-4o; dropped
+  import anthropic.
+- config.py — removed ANTHROPIC_API_KEY; added an OPENAI_API_KEY loader that
+  reads the env var and falls back to reading openai_api_key.txt for local
+  runs.
+- requirements.txt — anthropic>=0.34.0 → openai>=1.40.0.
+- .env — replaced the ANTHROPIC_API_KEY line with
+  OPENAI_API_KEY=[REDACTED_OPENAI_API_KEY].
+- .env.example — reworded Anthropic block to OpenAI.
+- .gitignore — added openai_api_key.txt so the plaintext key is never
+  committed.
+- AS_BUILT_...txt — prepended a dated (2026-09-09) migration note; left the
+  historical narrative intact.
+
+Verification:
+- grep confirmed no anthropic/claude-opus/messages.create references remain in
+  any .py.
+- python checks: openai 3.8.0 installed; import config works; OPENAI_API_KEY
+  resolves True; config no longer has an ANTHROPIC_API_KEY attribute; all three
+  modules parse.
+- LIVE OpenAI OCR test: a scratch script fed test_demo_notes_for_interactive_
+  keynote.pdf bytes to ocr_service.extract_fields(..., "application/pdf"). Real
+  gpt-4o call succeeded and returned structured fields — event_date "24/11",
+  duration "60 minutes" (correct default), summary populated. It read
+  client_org as "Charfield" where the earlier Anthropic run had logged
+  "Whiddon" — a handwriting-reading difference between vision models, not a
+  code defect (flagged to the user).
+
+Deployment:
+- Default branch confirmed main; staged only the 8 migration files (left the
+  pre-existing, unrelated .claude/skills/*.md deletions unstaged); confirmed no
+  .env / key file staged. Committed "Switch pipeline LLM calls from Anthropic
+  to OpenAI" (dbb2788) and pushed 131fcc3..dbb2788 to origin/main.
+- RemoteTrigger update on trig_01KSh5tdtUWA1BXND9eNgR4R: replaced the embedded
+  .env's ANTHROPIC_API_KEY line with OPENAI_API_KEY=[REDACTED_OPENAI_API_KEY],
+  and changed "via Claude vision" → "via OpenAI vision" and the "...Anthropic,
+  Supabase..." account list to "...OpenAI, Supabase...". Re-GET confirmed all
+  three stored copies of the prompt (derived_state, job_config, session_request)
+  now carry OPENAI_API_KEY and no ANTHROPIC_API_KEY; enabled and the empty
+  cron_expression left unchanged.
+
+Flagged the one owner-only step I could not do: adding api.openai.com to the
+routine's sandbox environment (env_01DYHNjMesGeuq9ABo7W6m6f) egress allowlist,
+without which cloud runs would 403 on OpenAI. Also noted the routine's own
+api_token_hint (sk-ant-oat01-...) is the Claude Code orchestrator's OAuth
+login, NOT the pipeline's Anthropic API key, and is inherent to any cloud
+routine.
+
+--------------------------------------------------------------------------------
+USER:
+Confirmed api.openai.com is already added to the egress allowlist. Asked
+whether anything else was needed from their end.
+
+--------------------------------------------------------------------------------
+ASSISTANT:
+Confirmed the switch is complete and egress was the last gate — nothing else
+strictly required. Flagged two non-blocking things:
+1. The routine has no cron set, so despite its name it won't auto-fire until a
+   schedule is added; offered to set it.
+2. Google refresh token can expire (~7 days, testing-mode OAuth) — the most
+   likely future failure; re-run oauth_setup.py and update the routine's stored
+   .env token if that happens.
+Offered to (a) set the hourly schedule and/or (b) trigger one manual cloud
+confirmation run (noting it processes real Gmail and could create a real
+proposal), pending the user's go-ahead.
+
+--------------------------------------------------------------------------------
+USER:
+Invoked /dcp (document, commit, push).
+
+--------------------------------------------------------------------------------
+ASSISTANT:
+Ran the dcp steps: wrote this chat-history export (secrets redacted), created
+as_built.txt and CLAUDE.md, then committed and pushed.
+
+================================================================================
+END OF EXPORT
+================================================================================
